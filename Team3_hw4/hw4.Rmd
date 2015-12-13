@@ -1,0 +1,89 @@
+Homework 4 - Curious Cats (Team 3)
+========================================================
+
+# Shiny - User Interface
+
+The Shiny User Interface is the graphical input device that allows the user to adjust various variables according to his or her preferences. The goal of the user interface is to offer inputs for the following variables: the number of simulations, the number of socks drawn, the number of pairs, priors for both the total number of socks and the proportion of paired socks, and the hyperparameters of those priors. In the final product, the inputs are aligned next to the output graphically.
+
+In order to meet these goals, we program a Shiny user interface that contains a sidebar with all of the variables above. Depending on the variable and its values, we offer numeric inputs, sliders, or drop-down menus with multiple choices to adjust the output according to the user's preferences. Here are a few special features of the input that should be mentioned: the maximum possible number of pairs drawn changes dynamically with the total number of sacks drawn, never exceeding n/2. Also, the choice of the hyperparameters adjusts dynamically to the prior chosen. The Poisson distribution, for instance, only has one input while the Negative Binomial has two.
+
+The histograms for the posteriors update as the user changes these input values.
+
+
+
+# Shiny - Server
+
+The Shiny Server includes the computational rules that we assign for different user inputs. The Server is designed in a way that the output dynamically changes based on the user's inputs. The first step in the calculation is to draw the total number of socks based on the prior that we assigned (Poisson or Negative Binomial). The second step in the calculation is to draw the proportion of paired socks (Beta, Uniform, or Truncated Normal).  The number of draws from these priors is set by the user.  These draws are vectorized to increase performance.
+
+Based on this, we simulate a laundry basket with the total number of socks and proportion of pairs coming from the prior draws and sample from this basket.  Once we have the sample from the basket, we count the number of paired socks and unpaired socks.  If these are equal to the values set by the user, we add the draws from the prior to our posterior. We then plot the histograms of the resulting posteriors. 
+
+The green lines represent the density of the simulations of the priors. The larger our number of simulations, the more these densities will look like the underlying theoretical distribution. The bars represent the distribution of draws from our posterior distribution. This way of plotting them allows the user to easily identify differences between the prior and the posterior distribution.  One benefit of ABC is that one does not need to calculate the likelihood, so the likelihood is absent from the plot.  
+
+Finally, the last part of the graphical output is a table that contains multiple values of interest. The first value is the efficiency which refers to the proportion of simulations that are identical to the observed data specified by the user. What follows are several values that represent (1) the original values of the socks problem and (2) the mean and median values of the simulations. Those values are only displayed when the user specifies to "display true values" in a check-box on the left.
+
+# Add local multithreading to Shiny app
+
+We considered three main techniques to our existing codes to make our app implementation as fast as possible.
+
+1) Add local multithreading
+
+The priors are randomly generated numbers, in which case when the number of simulations grow, the computation time will go up. So we used the `mclapply` function in the `parallel` package to simutaneously generating random numbers. 
+```{r, eval = FALSE}
+d_prop = unlist(mclapply(1:10, function(x) rtruncnorm(input$n_sims/10,0,1,input$prop_mu,input$prop_sigma),mc.cores = 4))
+``` 
+
+2) Vectorization and simplification
+
+In our shiny app we defined a generative model that will simulate the process of picking socks from the laundry. This process was fulfilled by a function called `gen_model` functin, and then applying it to the priors:
+```{r, eval = FALSE}
+gen_model = function(n_socks, prior_prop_pairs)
+  {
+    n_pairs <- round(floor(n_socks / 2) * prior_prop_pairs)
+    n_odd <- n_socks - n_pairs * 2
+    
+    # Simulating picking out n_picked socks
+    socks <- rep(seq_len(n_pairs + n_odd), rep(c(2, 1), c(n_pairs, n_odd)))
+    picked_socks <- sample(socks, size =  min(input$n_unique, n_socks))
+    sock_counts <- table(picked_socks)
+    n_paired = sum(sock_counts == 2)
+    n_odds <- sum(sock_counts == 1)
+    return(c(n_paired, n_odds))
+  }
+  
+t(apply(priors(),1, function(x) gen_model(x[1],x[2])))
+```
+We simplified this function by first pulling out the process of calculatiing the number of paired socks and number of odd socks, so that this calculation will be vectorized. The `table` function was used to calculate the number of picked paired socks and the number of odd socks, but it was time consuming based on `profvis` output. So we simplified it by using a `duplicated` function and it saved approximate 4000 ms time. The improved version of this part is: 
+```{r, eval = FALSE}
+n_pairs = reactive(
+  round(floor(total() / 2) * prop())
+)
+    
+n_odd = reactive(
+  total() - n_pairs() * 2
+) 
+
+pairs_odd = reactive(
+  data.frame(n_pairs = n_pairs(), n_odd = n_odd())
+)
+
+
+gen_model = function(n_pairs, n_odd)
+  {
+    # Simulating picking out n_picked socks
+    socks <- rep(seq_len(n_pairs + n_odd), rep(c(2, 1), c(n_pairs, n_odd)))
+    picked_socks <- sample(socks, size =  min(input$n_unique, 2*n_pairs+n_odd))
+    # sock_counts <- table(picked_socks)
+    # n_paired = sum(sock_counts == 2)
+    # n_odds <- sum(sock_counts == 1)
+    n_paired <- sum(duplicated(picked_socks))
+    n_odds <- picked_socks-sum(duplicated(picked_socks))*2
+    return(c(n_paired, n_odds))
+  }
+
+t(apply(pairs_odd(),1, function(x) gen_model(x[1],x[2])))
+
+```
+
+3) Separating reactive objects
+
+We believe that by creating seperate reactive objects instead of combining them into a single reactive object, the speed may be improved. Becasue when there is a minor change from the input, only things depend on it will change reactively. So we broke the priors and posteriors and made four reactive objects, namely prior total, prior proportion, posterior total and posterior proportion. 

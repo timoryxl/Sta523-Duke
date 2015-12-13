@@ -1,0 +1,508 @@
+---
+title: "Sta 523 - Final Exam - Fall 2015"
+author: "Lin Xiao"
+output: html_document
+runtime: shiny
+---
+
+
+First check and install all the packages we need for the exam
+
+```{r}
+# Check for libraries and install #
+listOfPackages <- c("shiny", "dplyr", "ggmap", "jsonlite", "maps", "magrittr", 
+"MazamaSpatialUtils", "stringr", "maptools", "testthat")
+NewPackages <- listOfPackages[!(listOfPackages %in% installed.packages()[,"Package"])]
+if(length(NewPackages)>0) {install.packages(NewPackages,repos="http://cran.rstudio.com/")}
+
+suppressMessages(suppressWarnings(library(shiny)))
+suppressMessages(suppressWarnings(library(testthat)))
+suppressMessages(suppressWarnings(library(dplyr)))
+suppressMessages(suppressWarnings(library(ggmap)))
+suppressMessages(suppressWarnings(library(jsonlite)))
+suppressMessages(suppressWarnings(library(magrittr)))
+suppressMessages(suppressWarnings(library(maps)))
+suppressMessages(suppressWarnings(library(maptools)))
+suppressMessages(suppressWarnings(library(MazamaSpatialUtils)))
+suppressMessages(suppressWarnings(library(stringr)))
+```
+
+
+1. Sparse Matrices
+
+Task 1 - Validation
+
+Write a function that will validate if the supplied object is a valid sparse matrix (i.e. meets all of the requirements above).
+
+Here I use `expect` series of function within `testthat` pacakge to help me validate the sparse matrix, if all the tests are passed, a True will be returned, else error will be announced.
+
+```{r}
+# vsm stands for valid sparse matrix
+validation <- function(vsm){
+  # Structure is a list
+  expect_is(vsm, "list")
+  
+  # Three elements
+  expect_true(length(vsm) == 3)
+  
+  # One of the elements is "nrow"
+  expect_true("nrow" %in% names(vsm))
+  
+  # Is an integer
+  expect_true(vsm$nrow %% 1 == 0)
+  
+  # Integer > 0
+  expect_true(vsm$nrow > 0)
+  
+  # One of the elements is "ncol"
+  expect_true("ncol" %in% names(vsm))
+  
+  # Is an integer
+  expect_true(vsm$ncol %% 1 == 0)
+  
+  # Integer > 0
+  expect_true(vsm$ncol > 0)
+  
+  # Leave the data frame alone for examination
+  vsm$nrow <- NULL
+  vsm$ncol <- NULL
+  
+  # The last element is a data frame
+  expect_is(vsm[[1]], "data.frame")
+  
+  # Three columns: ‘row’, ‘col’, ‘value’ 
+  expect_true(setequal(colnames(vsm[[1]]), c("row", "col", "value")))
+  
+  # ‘row’ and ‘col’ should be integers
+  expect_true(all(vsm[[1]][,1] %% 1 == 0) == T)
+  expect_true(all(vsm[[1]][,2] %% 1 == 0) == T)
+  
+  # ‘value’ should be numeric
+  expect_true(all(is.numeric(vsm[[1]][,3])) == T)
+  
+  # Ordered by row value and then col value
+  expect_identical(vsm[[1]], arrange(vsm[[1]], row, col))
+  return(T)
+}
+```
+
+Task 2 - Transform sparse matrix
+
+Write a function that accepts a sparse matrix as its argument and returns a dense matrix.
+
+
+To transform a sparse matrix, that is, a list, into dense matrix, we first construct a matrix and setting the number of columns and rows to be the ones in the list. Then we just simply loop through all the rows in the data frame of the list, and label the value according to the giving 'row' and 'col'.
+
+```{r}
+transform_sparse_matrix <- function(vsm){
+  # if it's valid, elso error will be returned
+  if(validation(vsm) == T){
+    nrow <- vsm$nrow
+    ncol <- vsm$ncol
+    
+    # Leave the data frame alone for later use
+    vsm$nrow <- NULL
+    vsm$ncol <- NULL
+    sparse_mat <- vsm[[1]]
+    dense_mat <- matrix(0, nrow = nrow, ncol = ncol)
+    for(i in 1:nrow(sparse_mat)){
+      dense_mat[sparse_mat[i,1],sparse_mat[i,2]] <- sparse_mat[i,3]
+    }
+    return(dense_mat)
+  }
+}
+```
+
+An error will be returned if the sparse matrix is not valid.
+
+Task 3 - Transform dense matrix
+
+Write a function that accepts a dense matrix as its argument and returns a sparse matrix. Note that if we transform from dense -> sparse -> dense or sparse -> dense -> sparse that starting object should be identical to ending object.
+
+Fisrt we get the number of rows and columns and store them in the list. Then we use use which function or just subset the indices and values. At last we need to reorder the rows and columns to make sure it's valid.
+
+```{r}
+transform_dense_matrix <- function(dm){
+  expect_true(is.matrix(dm))
+  # Return the indices with their non-zero values
+  sparse_mat <- data.frame(which(dm != 0, arr.ind = T), value = dm[dm != 0])
+  
+  # Order by row and then col
+  sparse_mat <- arrange(sparse_mat, row, col)
+  valid_sparse_matrix <- list(nrow = nrow(dm), ncol = ncol(dm), sparse_mat)
+  
+  # Test to check if they are equal, if not, error will be returned
+  expect_equal(dm, transform_sparse_matrix(valid_sparse_matrix))
+  return(valid_sparse_matrix)
+}
+```
+
+Task 4 - Matrix Multiplication
+
+Write a function that will accept two matrices as its arguments (either sparse or dense) and calculates the matrix product of the two input matrices. If multiplying two sparse matrices the returned matrix should also be sparse, you are also not allowed to convert these matrices into a dense form at any point. Any multiplication operation involving a dense matrix should return a dense matrix. Be sure to also check that the provided matrices are conforming.
+
+If two dense matrices are the inputs, we can do matrix multiplication easily. Else if two sparse matrices are the inputs, since we are not allowed to transform them into dense matrices and do the simple calculation, we can loop through the data frames and connect them to calculate the dense matrix we want and later transform it back to the sparse matrix. For details, we loop through the rows of the left matrix. For each row in it, we search for the value in the 'col' column in the 'row' column of the data frame in the right sparse matrix. Once connected we multiply the values together and assign it to the new dense matrix, which is defined with the nrow from the left and the ncol from the right, and the corresponding indices of this multiplied value are the value in the 'row' of the left sparse matrix, and the value in the 'col' of the right sparse matrix. We add all the values into the dense matrix through looping and obtain the matrix we need. The inputs can also be a sparse matrix and a dense matrix, we can transform the dense matrix into a sparse matrix and repeat the same thing as above.
+
+```{r}
+multiplication <- function(m1, m2){
+  
+  # If the inputs are both sparse "matrix"
+  if(is.list(m1) & is.list(m2)){
+    
+    # Check validity first
+    stopifnot(validation(m1) & validation(m2)) # Return error
+    if(m1$ncol != m2$nrow) return(F) # Return False
+    res_mat <- matrix(0, nrow = m1$nrow, ncol = m2$ncol)
+    
+    # Leave the data frame for later use
+    m1$nrow <- NULL
+    m1$ncol <- NULL
+    m2$nrow <- NULL
+    m2$ncol <- NULL
+    rec_mat1 <- m1[[1]]
+    rec_mat2 <- m2[[1]]
+    
+    # Main step, as described above
+    for(i in 1:nrow(rec_mat1)){
+      for(j in which(rec_mat2[,1] == rec_mat1[i,2])){
+        res_mat[rec_mat1[i,1],rec_mat2[j,2]] <- 
+          res_mat[rec_mat1[i,1],rec_mat2[j,2]] + 
+          rec_mat1[i,3]*rec_mat2[j,3]
+      }
+    }
+    
+    # Transform back to sparse "matrix"
+    result_sparse_mat <- transform_dense_matrix(res_mat)
+    return(result_sparse_mat)
+  }
+  
+  # If inputs are a sparse and a dense matrix
+  else if(is.list(m1) & is.matrix(m2)){
+    multiplication(m1, transform_dense_matrix(m2))
+  }else if(is.list(m2) & is.matrix(m1)){
+    multiplication(m2, transform_dense_matrix(m1))
+  }
+  
+  # If both are dense matrix
+  else if(is.matrix(m1) & is.matrix(m2)){
+    expect_equal(ncol(m1), nrow(m2))
+    return(m1 %*% m2)
+  }
+}
+```
+
+Task 5 - testthat
+
+Write at least 5 tests for each of the above functions using the testthat package. Note that you shouldn’t just test for correct behavior - check that errors are handled correctly.
+
+```{r}
+# Write some samples for testing
+tdmatrix <- matrix(c(1,0,0,3,0,2,0,1,3,8,0,0), ncol = 3)
+tdmatrix1 <- matrix(c(1,0,3,3,0,2,0,1,3,8,0,0), ncol = 3)
+tdmatrix2 <- matrix(c(1,0,9,3,0,2,0,1,3,8,0,0), ncol = 3)
+mat <- data.frame(matrix(c(1,1,1,1,3,3,2,2,2,2,3,8,4,1,3,4,2,1), ncol = 3, byrow = T))
+colnames(mat) <- c("row", "col", "value")
+tsmatrix1 <- list(ncol = ncol(tdmatrix), nrow = nrow(tdmatrix), mat)
+tsmatrix2 <- list(nrow = nrow(tdmatrix), ncol = ncol(tdmatrix), mat)
+tsmatrix3 <- list(nroww = nrow(tdmatrix), ncol = ncol(tdmatrix), mat)
+tsmatrix4 <- list(nrow = nrow(tdmatrix)+1, ncol = ncol(tdmatrix), mat)
+tsmatrix5 <- list(nrow = 5, ncol = 5,data.frame( mat = matrix(c(1,1,1), ncol = 3, nrow = 1, byrow = T)))
+tsmatrix5 <- list(nrow = 5, ncol = 5, value = data.frame( mat = matrix(c(1,1,1), ncol = 3, nrow = 1, byrow = T)))
+
+
+
+# Test for validation function
+expect_error(validation(tdmatrix))
+expect_true(validation(tsmatrix1))
+expect_true(validation(tsmatrix2))
+expect_error(validation(tsmatrix3))
+expect_true(validation(tsmatrix4))
+
+# Test for transform_sparse_matrix function
+expect_identical(transform_sparse_matrix(tsmatrix1), tdmatrix)
+expect_identical(transform_sparse_matrix(tsmatrix2), tdmatrix)
+expect_error(transform_sparse_matrix(tsmatrix3))
+expect_false(any(transform_sparse_matrix(tsmatrix1) == (tdmatrix-1)))
+expect_error(transform_sparse_matrix(tsmatrix5))
+
+
+# Test for transform_dense_matrix function
+expect_equal(transform_dense_matrix(tdmatrix)[[3]],tsmatrix1[[3]])
+expect_equal(transform_dense_matrix(tdmatrix)[[3]],tsmatrix2[[3]])
+expect_equal(transform_dense_matrix(tdmatrix)$nrow,tsmatrix1$nrow)
+expect_error(transform_dense_matrix(tsmatrix))
+expect_is(transform_dense_matrix(tdmatrix), "list")
+
+# Test for multiplication function
+expect_false(multiplication(tsmatrix1, tsmatrix1))
+expect_error(multiplication(tdmatrix, tdmatrix))
+expect_equivalent(multiplication(t(tdmatrix), tdmatrix), transform_sparse_matrix(multiplication(transform_dense_matrix(t(tdmatrix)), transform_dense_matrix(tdmatrix))))
+expect_equivalent(multiplication(t(tdmatrix1), tdmatrix1), transform_sparse_matrix(multiplication(transform_dense_matrix(t(tdmatrix1)), transform_dense_matrix(tdmatrix1))))
+expect_equivalent(multiplication(t(tdmatrix2), tdmatrix2), transform_sparse_matrix(multiplication(transform_dense_matrix(t(tdmatrix2)), transform_dense_matrix(tdmatrix2))))
+```
+
+
+2. Shiny Weather
+
+```{r, echo=FALSE}
+
+################################ 
+### Shiny App
+################################ 
+
+key = "72dd839e601dd06f1e48e16ec40604c9"
+
+# Factors for the icon column
+weather = c("clear-day", "clear-night", "rain", "snow", "sleet", "wind", 
+            "fog", "cloudy", "partly-cloudy-day", "partly-cloudy-night")
+
+# 76 Major cities
+city <- c("Amsterdam", "Ankara", "Athens", "Atlantic City", "Baltimore",
+          "Bangkok", "Beijing", "Berlin", "Berne",
+          "Brussels", "Budapest", "Buenos Aires", "Cairo", 
+          "Canberra", "Cape Town", "Chicago", "Cologne",
+          "Copenhagen", "Damascus", "Delhi", "Dubai", 
+          "Dublin", "Florence", "Genève", "Ha Noi", "Havana", "Helsinki", 
+          "Hong Kong", "Honolulu", "Istanbul", "Jakarta", "Jerusalem", 
+          "Kansas City", "Kathmandu", "Kuala Lumpur", "Lisbon", 
+          "London", "Los Angeles", "Luxembourg", 
+          "Madrid", "Manila", "Melbourne", "Mexico City", "Milan", 
+          "Montreal", "Moscow", "Mumbai", "Munich", "Nazareth", 
+          "New York", "Nice", "Osaka", "Ottawa", "Oslo",
+          "Paris", "Philadelphia", "Phnom Penh", "Prague", "Quito", 
+          "Reykjavík", "Rio de Janeiro", "San Francisco", "Santiago", 
+          "São Paulo", "Shanghai", "Singapore", "Stockholm", "Saint-Petersburg", 
+          "Sydney", "Taipei", "Tokyo", "Toronto", "Venice", 
+          "Vienna", "Washington", "Zürich")
+
+# Attributes: Second quantity 
+attributes <- c("summary", "icon", "precipIntensity", "precipProbability", 
+                "apparentTemperature", "dewPoint", "humidity", "windSpeed", 
+                "windBearing", "visibility", "cloudCover", "pressure", "ozone", "precipType")
+
+```
+
+
+Task 1 - Getting data from forecast.io
+
+When selecting a city through Shiny, a corresponding web page will be scraped using fromJSON. Since we only need hourly data, we can use `fromJSON(url)$hourly` to get the list of data, and later a summary and a data frame of the list will be returned for later use. Note that the time format of the data is just a bunch of numbers indicating the seconds since 1970-01-01, we need to make a transformation on it.
+
+Task 2 - Shiny Predictions
+
+
+We have three plots to show, major plot with temperature on it, "other plot" which will always return the second quantity plot user has chosen, and the world map indicating the location of the city. "Other plot" is being used here because some columns have categorical data, we cannot plot them with the first plot. Otherwise, numeric lines will be provided in these two plots. 
+
+For second quantities, icon is a factor with ten types of weather, preciType is not shown if there is 0 probability for precipitation, and for summary column the document doesn't give enough detail about it, so we should deal with them separately in the code. If user selects categorical data, the major plot will only have temperature on it and the selected data will be shown in the "other plot".
+
+The longitude and the latitude, along with the summary for the current are scraped and being plotted on the screen.
+
+```{r, echo=FALSE}
+shinyApp(
+  ui =   fluidPage(
+    # Give the panel a title
+    titlePanel(
+       "Weather forecast"
+    ),
+    # Use fluidRow here for better design
+    fluidRow(
+      column(5, align = "center",
+             h2("Major cities:"),
+             selectInput("Cities", label = "Choose a city to display", choices = city),
+             hr(),
+             # Select the attributes for second quantity
+             selectInput("Attributes", label = "Choose a second quantity you want to display",
+                         choices = attributes, selected = "precipIntensity")),
+      column(5,
+             # Summary is from the original hourly data list
+             h3("Summary"),
+             h5(textOutput("summary")),
+             # Use geocoding to get the longitude and latitude
+             h3("Location"),
+             h5(textOutput("location")),
+             # Return the country
+             h3("Country"),
+             h5(textOutput("country"))
+      )
+    ),
+    ### Show results in main panel
+    br(),
+    hr(),
+    fluidRow(
+      h2("Results:"),
+      plotOutput("temperature_plot")
+    ),
+      
+    fluidRow(
+      plotOutput("other_plot")
+    ),
+    fluidRow(
+      plotOutput("Worldmap")
+    )
+),
+
+#################################################################
+#  We have three plots above, major plot with temperature on it,
+#  Other plot which will always return the second quantity plot
+#  user has chosen, and the world map indicating the location of
+#  the city. Other plot is being used here because some columns 
+#  have categorical data, we cannot plot them with the first plot.
+#  Otherwise, numeric lines will be provided in these two plots.
+################################################################
+
+
+  server = function(input, output, session){
+    
+    
+    # Return a data list first
+    datalist = reactive(
+      { 
+        loc = geocode(input$Cities, source = "google")
+        url = paste0("https://api.forecast.io/forecast/", key, "/", loc[[2]], ",", loc[[1]])
+        dat = fromJSON(url)$hourly
+        dat
+      }
+    )
+    
+    # Extract the summary
+    summary = reactive(
+      {
+        datalist()$summary
+      }
+    )
+    
+    # Extract the data frame
+    data = reactive(
+      {
+        dat = datalist()$data
+        dat$time = as.POSIXct(dat$time, origin = "1970-01-01")
+        dat
+      }
+    )
+    
+    # Temperature plot
+    output$temperature_plot = renderPlot(
+      {
+        
+        
+        # To make the time format shorter
+        t <- data()$time %>% 
+          str_replace("2015-12", "Dec") %>% 
+          str_replace(":00:00", "") %>% 
+          str_replace("-", "/")
+        par(mar = c(8,10,4,10))
+        
+        # If the second quantity selected is continuous data, we
+        # can plot it with temperature
+        if(input$Attributes %in% c("precipIntensity", "precipProbability", 
+                                   "apparentTemperature", "dewPoint", "humidity", 
+                                   "windSpeed", "windBearing", "visibility", 
+                                   "cloudCover", "pressure", "ozone")){
+          plot(data()$time, data()$temperature, xaxt = "n", xlab = "", ylab = "temperature(F)", 
+               main = paste0("temperature(F) and ", input$Attributes, " hourly predictions"),
+               col = "red", type = "b")
+          par(new = T)
+          plot(data()$time, data()[,input$Attributes], ylab = " ", xlab = " ", axes = F, 
+               col = "blue", type = "b")
+          axis(1, labels = t, at = data()$time, las = 2)
+          mtext("hour", side = 1, line = 6)
+          mtext(input$Attributes, side = 4, line = 5) 
+          axis(4, seq(range(data()[,input$Attributes])[1], 
+                      range(data()[,input$Attributes])[2], length.out = 5), las = 1)
+          legend("topright", c("temperature", input$Attributes),lty=c(1,1),
+                 lwd=c(2.5,2.5), col=c("red", "blue"), cex=1.2)
+        }
+        # If not, we will stick to the temperature.
+        else{
+          plot(data()$time, data()$temperature, xaxt = "n", xlab = "", 
+               ylab = "temperature(F)", main = "temperature(F) hourly predictions",
+               col = "red", type = "b")
+          axis(1, labels = t, at = data()$time, las = 2)
+          mtext("hour", side=1, line = 6)
+        }
+      }
+    )
+    
+    # Other plot: for second quantity
+    output$other_plot = renderPlot(
+      {
+        # To make the time format shorter
+        t <- data()$time %>% 
+          str_replace("2015-12", "Dec") %>% 
+          str_replace(":00:00", "") %>% 
+          str_replace("-", "/")
+        
+        # If the second quantity selected is continuous data, plot the line
+        if(input$Attributes %in% c("precipIntensity", "precipProbability", 
+                                   "apparentTemperature", "dewPoint", "humidity", "windSpeed", 
+                                   "windBearing", "visibility", "cloudCover", "pressure", "ozone")){
+          par(mar = c(8,5,3,4))
+          plot(data()$time, data()[,input$Attributes], xaxt = "n", xlab = "", 
+               ylab = input$Attributes, main = paste0(input$Attributes, " hourly predictions"),
+               col = "blue", type = "b")
+          axis(1, labels = t, at = data()$time, las = 2)
+          mtext("hour", side=1, line = 6)
+        }
+        # If it's icon, first factorize it, then return a scatterplot
+        else if(input$Attributes == "icon"){
+          par(mar = c(8,8,3,4))
+          Response <- factor(data()$icon, levels = weather, labels = 1:10)
+          plot(data()$time, Response, ylim = c(1,10), xaxt = "n", yaxt = "n",
+               xlab = "", ylab = input$Attributes)
+          axis(1, labels = t, at = data()$time, las = 2)
+          mtext("hour", side=1, line = 6)
+          axis(2, at = 1:10, labels = weather, las = 1)
+        }
+        # If it's preciptype, which is not in the data of every city,
+        # fisrt give "NA" for the missing data
+        # Then make a barplot
+        else if(input$Attributes == "precipType"){
+          pre <- data()[,input$Attributes] 
+          pre[is.na(pre)] <- "NA"
+          barplot(table(pre))
+        }
+        
+        # If not return a barplot for summary
+        else{
+          barplot(table(data()[,input$Attributes]))
+        }
+      }
+    )
+    
+    # Print the summary words
+    output$summary = renderText({
+      summary()
+    })
+    
+    # Print the longitudes and latitudes
+    output$location = renderText({
+      loc = geocode(input$Cities, source = "google")
+      paste0("Longitude is ", loc[[1]], " and latitude is ", loc[[2]])
+    })
+    
+    # Print the country name
+    output$country = renderText(
+      {
+        loc = geocode(input$Cities, source = "google")
+        getCountryName(loc[[1]], loc[[2]])
+      }
+    )
+    
+    
+    # Print the world map and use a red dot to indicate the location of the city
+    output$Worldmap = renderPlot(
+      {
+        ll.visited <- geocode(input$Cities, source = "google")
+        visit.x <- ll.visited$lon
+        visit.y <- ll.visited$lat
+        map("world", fill=TRUE, col="white", bg="grey", ylim=c(-60, 90), mar=c(0,0,0,0))
+        points(visit.x,visit.y, col="red", pch = 8, cex = 2)
+      }
+    )
+    
+  }
+)
+```
+
+Because of the html format, the plots are not as nice as they were supposed to be.
+
+

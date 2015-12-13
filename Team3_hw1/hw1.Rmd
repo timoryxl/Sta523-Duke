@@ -1,0 +1,79 @@
+Homework 1 - Curious Cats (Team 3)
+========================================================
+```{r}
+source("graph.R")
+source("extra_credit.R")
+```
+
+# `is_valid` Function
+
+The code for the `is_valid` function is rather straight forward.  The code is based on the premise that it is easier to find something wrong with a graph than it is prove that a graph is valid.  Thus we begin assuming that a graph is valid, then perform various checks that can change the graph from valid to invalid.  Once the code finds a fault with the graph, such as an invalid structure or edge to a nonexistent vertex, the code immediately returns `FALSE`.  If the code reaches the end of the function, it has passed all of the tests and can be considered valid, so `TRUE` is returned.  
+
+The checks are performed using `sapply` on the input graph `g`.  The functions are mostly anonymous functions defined within the `sapply` calls.  They return `TRUE` if the function has some property that makes it invalid.  The `sapply` call returns a vector of logical variables, and we use the `any` command to test whether any of the sublists failed a test, resulting in a `TRUE` being returned for some list in `g`. If some test was failed, `FALSE` is returned immediately.   
+
+```{r}
+is_valid(graph1)
+is_valid(graph2)
+```
+
+
+# `is_undirected` Function
+
+The `is_undirected` Function is based on a matrix approach. Our goal is to create a matrix that has each of the vertices in one of the rows and columns. The matrix will then show connections from the matrix in the row to the matrix in the column. Note that a matrix can also be connected to itself but if it is not connected to itself, then we would expect all values on the diagonal to be 0. If matrix is undirected, the matrix that we created is by definition symmetric.
+
+The function that creates the matrix is the graph_into_matrix Function. Because we use the graph_into_matrix Function for the `is_isomorphic` Function as well, we have made it its own function. In the graph_into_matrix Function we first create a matrix that has the same number of rows and columns as the number of vertices in our graph. Then we have two for loops, one for the row and one for the column of the matrix. We loop through all vertices 1 to the last vertex of the graph. If there is a connection to the j-th vertex in the i-th vertex, then we will choose the respective value of the connection and put it in the i-th row and j-th column. The matrix that results from this is a matrix showing the connections of the i-th vertex to the j-th vertex in the i-th column and the j-th row. When this matrix is symmetric, the graph is undirected.
+
+```{r}
+is_undirected(graph1)
+is_undirected(graph2)
+```
+
+
+# `is_isomorphic` Function
+
+The `is_isomorphic` Function is based on the same matrix approach that we use for the `is_undirected` Function. We face several challenges here though. The first challenge is that two graphs might be isomorphic but the order of the vertices in the graph is different. The order should not play a role in our evaluation of whether or not a graph is isomorphic. The solution to this problem is to re-arrange the rows and columns of the matrix in a way that both graphs have matrices with the same order of elements in rows and columns. The command `order` allows us to find differences between an alphabetical order and the current order of any matrix. When we apply this command to the rows and columns of the matrix, we turn it into an alphabetically ordered matrix
+
+The second challenge we face is that in a graph of length 1, i.e. with just a single vertex, there may not be any connections. The single vertex may not even be connected to itself. For this case (only applying to graphs of length 1) we included the possibility that the length of the edges is zero.
+
+```{r}
+is_isomorphic(graph1,graph2)
+```
+
+
+# `is_connected` Function
+
+The `is_connected` function takes in a graph object and two characters. We design this function also based on the graph_into_matrix function we created so we can operate on matrix approach. After checking on the validity of input, the graph we take in and the vertices we are interested in, in order to make things clear, we use indexes instead of characters. By creating a vector named visited, we are able to track the vertices we have accesses to, and avoid revisiting. We will go through all the vertices from the starting vertex until the corresponding row has only zero entries, and return TRUE whenever there is a route connect the two vertices together. If there is no TRUE returned before the number of vertices iterations, we will return a FALSE meaning no connection between.
+
+Be careful when during a loop there might be more than one vertices coming into the visited vector, we only need to visit the next vertex instead of visiting them at the same time. And if we want to know if two vertices are connected and there is only one edge, from the starting vertex to itself, we will return false by checking if the next visited component is NA.
+
+```{r}
+is_connected(graph1, "A", "D")
+is_connected(graph2, "B", "N")
+```
+
+
+
+# `shortest_path` Function
+
+The `shortest_path` function is based on Dijkstra's Algorithm for find the shortest path.  In the algorithm, we specify a starting point and an ending point. For a given source vertex in the graph, the algorithm finds the shortest path between the source vertex to every other, and record the last visited vertex in the shortest path.  
+
+To start the algorithm, we collect the names of all vertices in the graph and create a vector of distances. The initial distance is set to zero for our initial vertex and infinity for all others if the source and destination are not the same. For conditions when the source and destination are the same, the initial distance is set to the distance from source to every vertex, and infinity if there is no path. This allows the condition when the path from source to source is not the shortest. We also created a visited set and an unvisited set.  
+
+We then begin to walk along the graph.  Our node has an associated distance.For our current node, we consider all unvisited connected nodes.  If the sum of the tentative distance to the current node and the distance to an unvisited node is less than the current tentative distance of the unvisited node, we replace the tentative distance of the unvisited node with this new sum.  Otherwise consider the next unvisited connected node.  Once we have checked all nodes which are connected to the current node, we mark the current node as visited.  Once the destination node has been marked visited, we end the algorithm.  
+The code relies on previously written chunks of code.  For example, the `is_valid` function and `graph_into_matrix` function (which creates a matrix representing the graph) are both called in the `shortest_path` function.  The `is_connected` function also plays a role in the code.  
+
+```{r}
+shortest_path(graph1, "A", "D")
+shortest_path(graph2, "A", "N")
+```
+
+
+# `plot_graph` Function
+
+The `plot_graph` Function is based on graph_into_matrix and is_valid functions, if the graph is undirected and only have weights 1, we can plot it nicely, but we don't have enough time to finish the other circumstances so we only print all the lines and their related weights.
+
+```{r}
+plot_graph(graph1)
+plot_graph(graph2)
+```
+

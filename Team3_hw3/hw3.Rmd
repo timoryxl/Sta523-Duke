@@ -1,0 +1,87 @@
+Homework 3 - Curious Cats (Team 3)
+========================================================
+
+# Data management
+
+The key challenge associated with the management of the data is to merge as many rows of the NYC data frame to spatial data in the "Pluto" and "intersections" data frame as possible. In order to do that, we need to modify the street names in the NYC data so that it matches the data in the other two data frames as much as possible. While there are many individual street names that might not have sufficiently high returns to be recorded individually, there are some simple, systematic differences. We try to account for these differences by systematically changing the variable names in the data frames.
+
+Some of these differences are, for example, that street names are generally written as "9 STREET", "7 AVENUE", etc. in the Pluto data frame, while they can be written either as "NINTH STREET" or "7TH AVENUE" in the NYC data. In general, while the Pluto data has more systematic characteristics, the coding of street names in the NYC data appears a little bit more arbitrary and non-systematic. In addition to that, the NYC data sometimes contains multiple addresses, such as "40-75 FIRST AVENUE". The Pluto data contains information on specific house numbers only, so the additional house numbers in the NYC data frame have to be removed. More examples can be found in the code.
+
+The Pluto data and the intersections data are coded in a more systematic fashion and thus need less clean up. The main changes that we apply are applied to the NYC data to make it conform with both Pluto and NYC. We then proceed by first merging the NYC and the Pluto data frames. Finally, after cleaning up the intersections data a little, we also merge this new data set into our "master data frame" called "`merged_data`". Throughout this process we use `left_join` command to ensure that we do not lose any data from the NYC data frame on the way.
+
+# Computing the boundries
+
+The file `compute_boundries.R` uses the `merged_data.Rdata` file created by `data_managment.R`.  The main purpose of this code is to create a GeoJSON file with our predicted borough boundaries.  The code first loads the `merged_data.Rdata` file and cleans the data (removing any NAs).  The column containing the boroughs is then converted into a factor and a support vector machine object, `svm.fit` is created.  We seleced support vector machines because of the flexibility they offer in classification.  A well tuned SVM model is slightly better than a logistic or linear discriminant analysis model.  Furthermore, an SVM model can multiple parameters that we can use to improve the fit of the model.  The parameters for `gamma` and `cost` used in the SVM model were computed using the `tune.out` function, for which an example appears below.  
+```{r, eval = FALSE}
+# This code is used for selecting best parameters
+tune.out <- tune(svm, Borough.y~.,
+                 data=data.no.na[1:50000,],
+                 kernel = "radial",
+                 ranges=list(cost=c(.01, .1),
+                             gamma=c(.5, 1)))
+```
+This code will select the best combination of `cost` and `gamma` using the first 50,000 observations in our data frame.  
+
+One the SVM model has been created, we create a raster object.  To avoid having to place points to define area outside of New York, we determined which boxes in the raster object contained data points.  Once we had this list of occupied cells, we only predicted for the occupied cells, ignoring the rest.  This forced us to select a slightly coarser grid to avoid holes in the center of the boroughs.  If we had more data, a finer grid could be used, which would give better boundaries.  To help rectify the problem of missing data, we wrote the function `fillHole`.  For all cells in the grid that are not assigned to a borough, the function checks if a suffient number of neighboring cells (in this case 5 of the 8 adjacent cells) belong to the same borough.  If so, the cell is assigned to the same borough.  After the prediction have been made, we use the `rasterToPolygons` to group the cells in polygons for the boroughs.  The result of our prediction is saved as `boroughs.json`. 
+
+# Visualization
+
+The visualization analysis uses the `analysis_data.Rdata` file created by `data_managment.R`. We first counted the number of cases of each complaint type and then discovered that the first and second most frequently received type of complaint is "street condition" and "heating". We then decided to draw a heatmap that shows the density of heating cases on the map by year. To do so, the fisrt thing is to subset the data frame so that it only contains cases with heating complaints. Second, because we want to look at the density changes by year, we need to extract the year when the case was created. 
+
+The packages we used to visualize data were `ggplot2` and `ggmap`. The `get_map` function is a smart function which queries the map for new york city from  OpenStreetMap server at a certain spatial zoom. The `ggmap` function plots the raster object produced by `get_map`. The `stat_density2d` function provides the 2d density estimation. 
+
+```{r, eval = FALSE}
+# download and install packages needed
+listOfPackages <- c("lubridate", "dplyr", "ggplot2","RgoogleMaps","ggmap")
+NewPackages <- listOfPackages[!(listOfPackages %in% installed.packages()[,"Package"])]
+if(length(NewPackages)>0) {install.packages(NewPackages,repos="http://cran.rstudio.com/")}
+
+# libaray packages
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(RgoogleMaps)
+library(ggmap)
+
+load("data/analysis_data.Rdata")
+
+# count the number of cases of each complaint type
+num.cases <- rep(0, length(unique(data.to.save.1$Complaint.Type)))
+names(num.cases) <- unique(data.to.save.1$Complaint.Type)
+
+for (i in unique(data.to.save.1$Complaint.Type)){
+  num.cases[i] <- sum(data.to.save.1$Complaint.Type == i)
+}
+num.cases[which(num.cases == max(num.cases))]
+num.cases[order(num.cases)]
+
+# turns out that the second most frequently received type of complaint is heating
+# leave only the cases about heating
+heating = data.to.save.1[which(data.to.save.1$Complaint.Type=="HEATING"),
+                         c("y","x","Created.Date","Borough.y")]
+
+# turn character into date, then grab the year   
+heating$Date<-as.Date(heating$Created.Date,"%m/%d/%Y")
+heating$Year<-as.numeric(format(heating$Date,'%Y'))
+
+Boroughs <- as.factor(unique(heating$Borough.y))
+Years <- unique(heating$Year)
+heating <- heating[!is.na(heating$Borough.y),]
+count_heating<-summarise(group_by(heating,Borough.y),n())
+count_heating.by_year<-summarise(group_by(heating,Borough.y,Year),n())
+
+new_york <- get_map(location = "new york city", zoom = 11, color = "bw", 
+                   source = "osm")
+NYMap <- ggmap(new_york, base_layer = ggplot(aes(x = x, y = y),
+                                                 data = heating))
+NYMap + stat_density2d(aes(x = x, y = y, fill = ..level..),
+                       bins = 5, geom = "polygon",
+                       data = heating) +
+  scale_fill_gradient(low = "purple", high = "red") +
+  facet_wrap(~ Year)
+
+```
+From the plot we can see that, Brooklyn has the most highest density of heating complaints, and then follows The Bronx. And we can also get an idea of the density changes by year, that is, the number of complaints calls is shrinking from 2010 to 2013, although only slightly. But the trend does not continue to 2014.  
+
+
+

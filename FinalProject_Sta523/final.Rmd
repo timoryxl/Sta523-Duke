@@ -1,0 +1,60 @@
+Final Project 
+======================================
+
+---
+Authors: Anna Yanchenko, Reuben McCreanor, Sunith Suresh, Yaqian Cheng and, Lin Xiao
+output: html_document
+---
+
+```{r, message=FALSE, echo=FALSE}
+# Check for libraries and install #
+listOfPackages <- c("shiny", "truncnorm", "tmvtnorm", "parallel", "rvest", "magrittr", 
+"XML", "stringr", "ggmap", "leaflet")
+NewPackages <- listOfPackages[!(listOfPackages %in% installed.packages()[,"Package"])]
+if(length(NewPackages)>0) {install.packages(NewPackages,repos="http://cran.rstudio.com/")}
+
+# Load libraries #
+library(shiny)
+library(truncnorm)
+library(tmvtnorm)
+library(parallel)
+library(rvest)
+library(magrittr)
+library(XML)
+library(stringr)
+library(ggmap)
+library(leaflet)
+```
+
+##Data Scraping##
+
+The datasets we used for analysis come from 3 different websites: The offense and defense datasets from http://espn.go.com/college-football/statistics, college football rankings of 2015 form http://espn.go.com/college-football/rankings, and all the Division 1 football schools, their conference and where they are located https://en.wikipedia.org/wiki/List_of_NCAA_Division_I_FBS_football_programs.
+
+For the offense it includes total offense, passing, rushing, receiving, downs, offensive efficiency, and for the defense it includes total defense, passing defense, rushing defense sacks, interceptions, and defense efficiency. For the downs it includes first, third, fourth downs and penalties. There are overlapping columns with different names among all the parts in these datasets, and the tricky part is that some of the columns are not 100% the same, but instead 99% due to recording errors. After scraping these parts we merge them and create offense.csv and defense.csv files.
+
+For the ranking's data it's much easier to scape, and we scrape the latest rankings for analysis, however, due to website issues, because the rankings are updated weekly, there are weeks that only have 3 types of ranking, and our code only works for the weeks that have 4 types of rankings.
+
+Finally, we scraped the first data table from Wikipedia page: List of NCAA Division I FBS football programs. It contains all the division 1 teams, and their nicknames, cities, states, current conferences, former conferences, and the years they started to play and joined FBS. We also geocoded team latitudes and longitudes for further analysis. The only problem here is that the team names of this table are slightly different from the datasets we scraped before, so we simply find out the different names between them and rename them with the shorter names. After that we merge the offense and defense data with the latitudes and longitudes from this wiki dataset.
+
+Since the rankings and team statistics are constantly changing, the data that we use in our Shiny app is static for the week of Nov 8.  The CFP rankings in particular are updated on a particular day of the week, so if we scrape the data the day before the poll is updated, sometimes this particular ranking does not exist.  Thus, for the purpose of the Shiny app, we use static data.
+
+##Prediction of Team Score##
+First, the data from the web scraping is further cleaned and only variables of interest are selected.  We only look at statistics that are per game, for example the number of passing yards a team allows per game, rather than total statistics, since it is possible that teams have played different numbers of games so far in the season. The college football playoff and AP ranks are included as statistics for each team by creating 2 indicator variables for each ranking.  If a team is ranked in the top 5 for the CFP rankings, the first indicator variable is 1 for CFP, if a team is ranked between 6 and 25 in the CFP poll, the second indicator has a value of 1 and teams that are unranked in the CFP poll have values of 0 for both indicators for CFP.  The indicators are created analogously for the AP poll.  The CFP and AP polls are considered the two most important college football rankings, and thus we only included these two polls in our predictions.  
+
+We consider 26 total variables for defense and 30 variables total for offense.  We then run LASSO regression on both the offense and defense data to predict the number of points per game.  We select the LASSO as our regression method as the LASSO performs variable selection.  For example, we find that in our offense regression (r.offense), the variables passing yards per game, rushing yards per game, longest pass completed, passing rating, longest rush, number of first downs as a result of penalties, and if a team is ranked 6-25 in the AP poll are not significant.  This is interesting, as our model indicates that the distribution of passing yards and rushing yards per game is not important in predicting points per game, only the total number of yards per game.  
+
+There are 128 teams in Division 1 football and our models are trained on 80 of these teams and tested on the remaining 48.  Our defense model has a lower out of sample MSE value (1.30) than our offense model (4.36), though both of these values are fairly low, so our models are doing a good job of prediction the points per game for offense and defense.  Model diagnostics show that the residuals are randomly scattered about 0 and do not appear to have any structure and are not too large in magnitude.  Thus, our regression model assumptions are met.
+
+In the Shiny app, to predict the score of a game between two user-selected teams, we proceed as follows.  First, we predict the number of points that team 1 will score by plugging in team 1's data for offense into the r.defense regression model.  We predict the number of points team 1 will allow by plugging in team 1's defense statistics into the r.offense model.  As there is not a 100% overlap between the variables used in the defense and offense models, we select the missing data from the opposite team’s statistics.  For example, the defense model calls for defensive efficiency, which is obviously not one of the stats included for team 1's offense.  When predicting the number of points that team 1 will score, we select the missing defense statistics that we need in the model, like defensive efficiency, from team 2's defensive statistics.  
+
+Using the same method as we did for team 1, we then predict the number of points team 1 will score and allow in a game against team 2.  Finally, we take the average of the number of points team 1 will score and the number of points that team 2 will allow to find team 1's score and we take the average of the number of points team 2 will score and team 1 will allow to predict team 2's score.
+
+
+##Conference Clustering##
+To predict ideal conference clustering schemes, we use K-means clustering by geographic location, offensive stats, defensive stats, and total statistics.  There are 11 actual conferences in Division 1 college football, so each of the clustering schemes above uses 11 as the number of clusters.  College football conferences are a controversial and lucrative topic in college football, so we decided to see what the conferences should actually look like, based on the four criteria above and compare our clusters to the actual college football conferences.
+
+
+##Shiny App Design##
+Finally, we bring all of our analysis together in the form of a Shiny app. This app allows the user to select any two NCAA Division I football teams, and using the predictive model detailed above, displays the predicted score when the teams play. The panel below then displays the winning team. Each time the user changes the team, the inputs are designed to be reactive so that the app will automatically rerun the regression and display the new predicted score and winning team.
+
+We then allow the user to view the results of different clustering criteria on a map of the United States using the `leaflet` package. The map on the left-hand side displays the geographic map of the current NCAA conference clusters with a check box that allows the user to turn on and off the legend for optimal viewing. Each one of the points also has a label with the team name, which allows the user to view the label when they click on the mapped point. The map on the right-hand side displays the optimal conferences by user criteria. Each time the user selects one of the criteria from the options of Geographic Location, Offense, Defense, and Offense and Defense, the map will refresh to display the new clustering obtained from the K-means analysis outlined in the previous section.

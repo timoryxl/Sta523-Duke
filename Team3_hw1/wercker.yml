@@ -1,0 +1,28 @@
+box: rocker/hadleyverse
+
+build:
+  steps:
+    - script:
+        name: Check for allowed files
+        code: |
+          Rscript -e "source('https://raw.githubusercontent.com/Sta523-Fa15/Homework/master/hw1/hw1_whitelist.R')"
+    - script:
+        name: Render R markdown
+        code: |
+          Rscript -e "library(rmarkdown);render('hw1.Rmd')"
+    - script:
+        name: Get Tests
+        code: |
+          echo ""
+          mkdir tests
+          wget -nv https://raw.githubusercontent.com/Sta523-Fa15/Homework/master/hw1/tests/test_is_connected.R -O tests/test_is_connected.R
+          wget -nv https://raw.githubusercontent.com/Sta523-Fa15/Homework/master/hw1/tests/test_is_isomorphic.R -O tests/test_is_isomorphic.R
+          wget -nv https://raw.githubusercontent.com/Sta523-Fa15/Homework/master/hw1/tests/test_is_undirected.R -O tests/test_is_undirected.R
+          wget -nv https://raw.githubusercontent.com/Sta523-Fa15/Homework/master/hw1/tests/test_is_valid.R -O tests/test_is_valid.R
+          wget -nv https://raw.githubusercontent.com/Sta523-Fa15/Homework/master/hw1/tests/test_min_span_tree.R -O tests/test_min_span_tree.R
+          wget -nv https://raw.githubusercontent.com/Sta523-Fa15/Homework/master/hw1/tests/test_shortest_path.R -O tests/test_shortest_path.R
+    - script:
+        name: Run Tests
+        code: |
+          echo ""
+          Rscript -e "library(testthat);source('graph.R');test_dir('tests');test_dir('tests',reporter='stop')"
